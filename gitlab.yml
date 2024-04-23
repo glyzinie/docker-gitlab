@@ -1,0 +1,203 @@
+version: '3'
+services:
+
+  # https://docs.gitlab.com/ee/administration/package_information/postgresql_versions.html
+  # https://docs.gitlab.com/ee/install/requirements.html#postgresql-requirements
+  postgresql:
+    image: postgres:14.10-alpine
+    restart: always
+    healthcheck:
+      test: ['CMD', 'pg_isready']
+    deploy:
+      update_config:
+        parallelism: 1
+        delay: 1s
+        order: start-first
+    volumes:
+      - postgresql-data:/var/lib/postgresql
+    environment:
+      POSTGRES_DB: 'gitlabhq_production'
+      POSTGRES_USER: 'gitlab'
+      POSTGRES_PASSWORD: 'gitlab-password'
+      DB_EXTENSION: 'pg_trgm,btree_gist'
+    networks:
+      - gitlab
+
+  # https://docs.gitlab.com/ee/install/requirements.html#redis
+  redis:
+    image: redis:7.2.4-alpine
+    restart: always
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+    deploy:
+      update_config:
+        parallelism: 1
+        delay: 1s
+        order: start-first
+    volumes:
+      - redis-data:/data:Z
+    networks:
+      - gitlab
+
+  gitlab:
+    image: gitlab/gitlab-ee:16.11.0-ee.0
+    #platform: linux/amd64
+    restart: always
+    healthcheck:
+      test: ['CMD', '/opt/gitlab/bin/gitlab-healthcheck', '--fail', '--max-time', '10']
+      interval: 60s
+      timeout: 30s
+      retries: 5
+    depends_on:
+      - postgresql
+      - redis
+    deploy:
+      replicas: 1
+      update_config:
+        order: start-first
+      labels:
+        - traefik.enable=true
+        - raefik.docker.lbswarm=true
+        # HTTP
+        - traefik.http.routers.gitlab.entrypoints=http
+        - traefik.http.routers.gitlab.rule=Host(`gitlab.localhost`)
+        - traefik.http.routers.gitlab.service=gitlab
+        - traefik.http.services.gitlab.loadbalancer.server.port=80
+        # SSH (git)
+        - traefik.tcp.routers.gitlab-ssh.rule=HostSNI(`*`)
+        - traefik.tcp.routers.gitlqab-ssh.entrypoints=ssh
+        - traefik.tcp.routers.gitlab-ssh.service=gitlab-ssh
+        - traefik.tcp.services.gitlab-ssh.loadbalancer.server.port=22
+    volumes:
+      - gitlab-config:/etc/gitlab
+      - gitlab-data:/var/opt/gitlab
+      - gitlab-git-data:/var/opt/gitlab/git-data
+      - gitlab-shared-data:/var/opt/gitlab/gitlab-data/gitlab-rails/shared
+      - gitlab-updatehooks-data:/var/opt/gitlab/embedded/service/gitlab-shell/hooks/update.d
+      - gitlab-logs:/var/log/gitlab
+    environment:
+      TZ: 'Asia/Tokyo'
+      GITLAB_OMNIBUS_CONFIG: |
+        gitlab_rails['time_zone'] = 'Asia/Tokyo'
+        gitlab_rails['initial_root_password'] = "MySuperSecretAndSecurePassw0rd!"
+        gitlab_rails['initial_shared_runners_registration_token'] = 'glrt-YEzpAyj3rVJUKYsxm9HM'
+        gitlab_rails['gitlab_default_can_create_group'] = false
+        gitlab_rails['gitlab_username_changing_enabled'] = false
+
+        # HTTP
+        external_url 'http://gitlab.localhost'
+        nginx['listen_port'] = 80
+        nginx['listen_https'] = false
+        nginx['redirect_http_to_https'] = false
+
+        # DB
+        postgresql['enable'] = false
+        postgresql['version'] = 14
+        gitlab_rails['db_adapter'] = 'postgresql'
+        gitlab_rails['db_encoding'] = 'utf8'
+        gitlab_rails['db_host'] = 'postgresql'
+        gitlab_rails['db_port'] = 5432
+        gitlab_rails['db_username'] = 'gitlab'
+        gitlab_rails['db_password'] = 'gitlab-password'
+
+        # Redis
+        redis['enable'] = false
+        redis['port'] = 6379
+        gitlab_rails['redis_host'] = 'redis'
+
+        # Disable
+        gitlab_pages['enable'] = false
+        pages_nginx['enable'] = false
+        # ---
+        mattermost['enable'] = false
+        mattermost_nginx['enable'] = false
+        # ---
+        registry['enable'] = false
+        registry_nginx['enable'] = false
+        ## Prometheus/Grafana
+        prometheus_monitoring['enable'] = false
+        postgres_exporter['enable'] = false
+        redis_exporter['enable'] = false
+        grafana['enable'] = false
+
+        # LFS
+        #gitlab_rails['lfs_enable'] = true
+
+        # Mail
+        gitlab_rails['smtp_enable'] = false
+        gitlab_rails['gitlab_email_enabled'] = false
+
+        # LDAP
+        gitlab_rails['ldap_enabled'] = false
+
+        # Prometheus
+        # https://docs.gitlab.com/ee/administration/monitoring/
+
+        # チューニング
+        #gitlab_workhorse['image_scaler_max_procs'] = 10
+        ## Puma
+        #puma['per_worker_max_memory_mb'] = 1024
+        ## Sidekiq
+        #sidekiq['max_concurrency'] = 10
+        ## Redis
+        #redis['io_threads'] = 4
+        #redis['io_threads_do_reads'] = true
+        #redis['lazyfree_lazy_eviction'] = true
+        #redis['lazyfree_lazy_expire'] = true
+        #redis['lazyfree_lazy_server_del'] = true
+        #redis['replica_lazy_flush'] = true
+    networks:
+      - gitlab
+
+  #gitlab-runner:
+  #  image: gitlab/gitlab-runner:alpine
+  #  restart: always
+  #  depends_on:
+  #    - gitlab
+  #  deploy:
+  #    replicas: 1
+  #    restart_policy:
+  #      condition: none
+  #  volumes:
+  #    - gitlab-runner:/etc/gitlab-runner
+  #    - /var/run/docker.sock:/var/run/docker.sock
+  #  networks:
+  #    - gitlab
+
+  #gitlab-runner-register:
+  #  image: gitlab/gitlab-runner:alpine
+  #  depends_on:
+  #    - gitlab
+  #  deploy:
+  #    replicas: 1
+  #    restart_policy:
+  #      condition: none
+  #  volumes:
+  #    - ./gitlab-runner/config:/etc/gitlab-runner
+  #    - /var/run/docker.sock:/var/run/docker.sock
+  #  command:
+  #    - register
+  #    - --non-interactive
+  #    - --name=Clubhillel Docker Runner
+  #    - --executor=docker
+  #    - --docker-image=docker:stable
+  #    - --docker-volumes=/var/run/docker.sock:/var/run/docker.sock
+  #    - --url=http://gitlab
+  #    - --token=glrt-YEzpAyj3rVJUKYsxm9HM
+  #  networks:
+  #    - gitlab
+
+networks:
+  gitlab:
+    internal: true
+
+volumes:
+  postgresql-data:
+  redis-data:
+  gitlab-config:
+  gitlab-data:
+  gitlab-git-data:
+  gitlab-shared-data:
+  gitlab-updatehooks-data:
+  gitlab-logs:
+  gitlab-runner:

@@ -1,0 +1,319 @@
+version: '3'
+services:
+
+  # https://docs.gitlab.com/ee/administration/package_information/postgresql_versions.html
+  # https://docs.gitlab.com/ee/install/requirements.html#postgresql-requirements
+  postgresql:
+    image: postgres:14.10-alpine
+    restart: always
+    healthcheck:
+      test: ['CMD', 'pg_isready']
+    deploy:
+      update_config:
+        parallelism: 1
+        delay: 1s
+        order: start-first
+    volumes:
+      - postgresql-data:/var/lib/postgresql
+    environment:
+      POSTGRES_DB: 'gitlabhq_production'
+      POSTGRES_USER: 'gitlab'
+      POSTGRES_PASSWORD: 'gitlab-password'
+      DB_EXTENSION: 'pg_trgm,btree_gist'
+    networks:
+      - gitlab
+
+  # https://docs.gitlab.com/ee/install/requirements.html#redis
+  redis:
+    image: redis:7.2.4-alpine
+    restart: always
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+    deploy:
+      update_config:
+        parallelism: 1
+        delay: 1s
+        order: start-first
+    volumes:
+      - redis-data:/data:Z
+    networks:
+      - gitlab
+
+  gitlab: # rails
+    image: gitlab/gitlab-ee:16.11.0-ee.0
+    #platform: linux/amd64
+    restart: always
+    healthcheck:
+      test: ['CMD', '/opt/gitlab/bin/gitlab-healthcheck', '--fail', '--max-time', '10']
+      interval: 60s
+      timeout: 30s
+      retries: 5
+    depends_on:
+      - postgresql
+      - redis
+    deploy:
+      replicas: 1
+      update_config:
+        order: start-first
+      labels:
+        - traefik.enable=true
+        - raefik.docker.lbswarm=true
+        # HTTP
+        - traefik.http.routers.gitlab.entrypoints=http
+        - traefik.http.routers.gitlab.rule=Host(`gitlab.localhost`)
+        - traefik.http.routers.gitlab.service=gitlab
+        - traefik.http.services.gitlab.loadbalancer.server.port=80
+        # SSH (git)
+        - traefik.tcp.routers.gitlab-ssh.rule=HostSNI(`*`)
+        - traefik.tcp.routers.gitlqab-ssh.entrypoints=ssh
+        - traefik.tcp.routers.gitlab-ssh.service=gitlab-ssh
+        - traefik.tcp.services.gitlab-ssh.loadbalancer.server.port=22
+    volumes:
+      - gitlab-config:/etc/gitlab
+      - gitlab-data:/var/opt/gitlab
+      - gitlab-shared-data:/var/opt/gitlab/gitlab-data/gitlab-rails/shared
+      - gitlab-updatehooks-data:/var/opt/gitlab/embedded/service/gitlab-shell/hooks/update.d
+    environment:
+      TZ: 'Asia/Tokyo'
+      GITLAB_OMNIBUS_CONFIG: |
+        gitlab_rails['time_zone'] = 'Asia/Tokyo'
+        gitlab_rails['initial_root_password'] = "MySuperSecretAndSecurePassw0rd!"
+        gitlab_rails['initial_shared_runners_registration_token'] = 'glrt-YEzpAyj3rVJUKYsxm9HM'
+        gitlab_rails['gitlab_default_can_create_group'] = false
+        gitlab_rails['gitlab_username_changing_enabled'] = false
+
+        # TODO:
+        external_url 'https://gitlab.example.com'
+
+        # Gitaly and GitLab use two shared secrets for authentication, one to authenticate gRPC requests
+        # to Gitaly, and a second for authentication callbacks from GitLab-Shell to the GitLab internal API.
+        # The following two values must be the same as their respective values
+        # of the Gitaly setup
+        gitlab_rails['gitaly_token'] = 'gitalysecret'
+        gitlab_shell['secret_token'] = 'shellsecret'
+
+        git_data_dirs({
+          'default' => { 'gitaly_address' => 'tcp://gitlab-gitaly:8075' },
+        })
+
+        ## Disable components that will not be on the GitLab application server
+        roles(['application_role'])
+        gitaly['enable'] = false
+        nginx['enable'] = true
+        sidekiq['enable'] = false
+
+        # DB
+        postgresql['enable'] = false
+        postgresql['version'] = 14
+        gitlab_rails['db_adapter'] = 'postgresql'
+        gitlab_rails['db_encoding'] = 'utf8'
+        gitlab_rails['db_host'] = 'postgresql'
+        gitlab_rails['db_port'] = 5432
+        gitlab_rails['db_username'] = 'gitlab'
+        gitlab_rails['db_password'] = 'gitlab-password'
+
+        # Redis
+        redis['enable'] = false
+        redis['port'] = 6379
+        gitlab_rails['redis_host'] = 'redis'
+
+        # Set the network addresses that the exporters used for monitoring will listen on
+        node_exporter['listen_address'] = '0.0.0.0:9100'
+        gitlab_workhorse['prometheus_listen_addr'] = '0.0.0.0:9229'
+        puma['listen'] = '0.0.0.0'
+
+        # Add the monitoring node's IP address to the monitoring whitelist and allow it to
+        # scrape the NGINX metrics. Replace placeholder `monitoring.gitlab.example.com` with
+        # the address and/or subnets gathered from the monitoring node
+        gitlab_rails['monitoring_whitelist'] = ['<MONITOR NODE IP>/32', '127.0.0.0/8']
+        nginx['status']['options']['allow'] = ['<MONITOR NODE IP>/32', '127.0.0.0/8']
+
+
+        # Disable
+        gitlab_pages['enable'] = false
+        pages_nginx['enable'] = false
+        # ---
+        mattermost['enable'] = false
+        mattermost_nginx['enable'] = false
+        # ---
+        registry['enable'] = false
+        registry_nginx['enable'] = false
+        ## Prometheus/Grafana
+        prometheus_monitoring['enable'] = false
+        postgres_exporter['enable'] = false
+        redis_exporter['enable'] = false
+        grafana['enable'] = false
+        alertmanager['enable'] = false
+
+        # LFS
+        #gitlab_rails['lfs_enable'] = true
+
+        # Mail
+        gitlab_rails['smtp_enable'] = false
+        gitlab_rails['gitlab_email_enabled'] = false
+
+        # LDAP
+        gitlab_rails['ldap_enabled'] = false
+
+        # Prometheus
+        # https://docs.gitlab.com/ee/administration/monitoring/
+    networks:
+      - gitlab
+
+  gitlab-gitaly:
+    image: gitlab/gitlab-ee:16.11.0-ee.0
+    #platform: linux/amd64
+    restart: always
+    healthcheck:
+      test: ['CMD', '/opt/gitlab/bin/gitlab-healthcheck', '--fail', '--max-time', '10']
+      interval: 60s
+      timeout: 30s
+      retries: 5
+    depends_on:
+      - postgresql
+      - redis
+    deploy:
+      replicas: 1
+      update_config:
+        order: start-first
+    volumes:
+      - gitlab-git-data:/var/opt/gitlab/git-data
+    environment:
+      TZ: 'Asia/Tokyo'
+      GITLAB_OMNIBUS_CONFIG: |
+        gitlab_rails['time_zone'] = 'Asia/Tokyo'
+
+        postgresql['enable'] = false
+        redis['enable'] = false
+        nginx['enable'] = false
+        puma['enable'] = false
+        sidekiq['enable'] = false
+        gitlab_workhorse['enable'] = false
+        prometheus['enable'] = false
+        alertmanager['enable'] = false
+        gitlab_exporter['enable'] = false
+        gitlab_kas['enable'] = false
+
+        gitlab_rails['auto_migrate'] = false
+
+        # DB
+        postgresql['enable'] = false
+        postgresql['version'] = 14
+        gitlab_rails['db_adapter'] = 'postgresql'
+        gitlab_rails['db_encoding'] = 'utf8'
+        gitlab_rails['db_host'] = 'postgresql'
+        gitlab_rails['db_port'] = 5432
+        gitlab_rails['db_username'] = 'gitlab'
+        gitlab_rails['db_password'] = 'gitlab-password'
+
+        # Redis
+        redis['enable'] = false
+        redis['port'] = 6379
+        gitlab_rails['redis_host'] = 'redis'
+
+        gitlab_rails['internal_api_url'] = 'http://gitlab'
+        gitaly['enable'] = true
+        gitlab_shell['secret_token'] = 'shellsecret'
+        node_exporter['listen_address'] = '0.0.0.0:9100'
+        gitaly['configuration'] = {
+          listen_addr: '0.0.0.0:8075',
+          prometheus_listen_addr: '0.0.0.0:9236',
+          auth: {
+            token: 'gitalysecret',
+          },
+          pack_objects_cache: {
+            enabled: true,
+          },
+          storage: [
+            {
+              name: 'default',
+              path: '/var/opt/gitlab/git-data',
+            },
+          ],
+        }
+    networks:
+      - gitlab
+
+  gitlab-sidekiq:
+    image: gitlab/gitlab-ee:16.11.0-ee.0
+    #platform: linux/amd64
+    restart: always
+    healthcheck:
+      test: ['CMD', '/opt/gitlab/bin/gitlab-healthcheck', '--fail', '--max-time', '10']
+      interval: 60s
+      timeout: 30s
+      retries: 5
+    depends_on:
+      - postgresql
+      - redis
+    deploy:
+      replicas: 1
+      update_config:
+        order: start-first
+    volumes:
+      - gitlab-config:/etc/gitlab
+      - gitlab-data:/var/opt/gitlab
+    environment:
+      TZ: 'Asia/Tokyo'
+      GITLAB_OMNIBUS_CONFIG: |
+        gitlab_rails['time_zone'] = 'Asia/Tokyo'
+        gitlab_rails['auto_migrate'] = false
+
+        # https://docs.gitlab.com/omnibus/roles/#sidekiq-roles
+        roles(["sidekiq_role"])
+
+        # TODO: External URL
+        external_url 'https://gitlab.local'
+
+        # DB
+        postgresql['enable'] = false
+        postgresql['version'] = 14
+        gitlab_rails['db_adapter'] = 'postgresql'
+        gitlab_rails['db_encoding'] = 'utf8'
+        gitlab_rails['db_host'] = 'postgresql'
+        gitlab_rails['db_port'] = 5432
+        gitlab_rails['db_username'] = 'gitlab'
+        gitlab_rails['db_password'] = 'gitlab-password'
+
+        # Redis
+        redis['enable'] = false
+        redis['port'] = 6379
+        gitlab_rails['redis_host'] = 'redis'
+
+        # Gitaly and GitLab use two shared secrets for authentication, one to authenticate gRPC requests
+        # to Gitaly, and a second for authentication callbacks from GitLab-Shell to the GitLab internal API.
+        # The following two values must be the same as their respective values
+        # of the Gitaly setup
+        gitlab_rails['gitaly_token'] = 'gitalysecret'
+        gitlab_shell['secret_token'] = 'shellsecret'
+
+        git_data_dirs({
+          'default' => { 'gitaly_address' => 'tcp://gitlab-gitaly:8075' },
+        })
+
+        # Sidekiq
+        sidekiq['enable'] = true
+        sidekiq['listen_address'] = "0.0.0.0"
+
+        ## Set number of Sidekiq queue processes to the same number as available CPUs
+        sidekiq['queue_groups'] = ['*'] * 4
+
+        ## Set the network addresses that the exporters will listen on
+        node_exporter['listen_address'] = '0.0.0.0:9100'
+    networks:
+      - gitlab
+
+networks:
+  gitlab:
+    internal: true
+
+volumes:
+  postgresql-data:
+  redis-data:
+  gitlab-config:
+  gitlab-data:
+  gitlab-git-data:
+  gitlab-shared-data:
+  gitlab-updatehooks-data:
+  gitlab-logs:
+  gitlab-runner:

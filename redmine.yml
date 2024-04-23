@@ -1,0 +1,35 @@
+version: '3'
+services:
+
+  postgresql:
+    image: postgres:14.10-alpine
+    restart: always
+    healthcheck:
+      test: ['CMD', 'pg_isready', '-U', '${POSTGRES_USER:-postgres}']
+    volumes:
+      - postgresql-data:/var/lib/postgresql
+    environment:
+      POSTGRES_DB: 'gitlabhq_production'
+      POSTGRES_USER: 'gitlab'
+      POSTGRES_PASSWORD: 'gitlab-password'
+    networks:
+      - redmine
+
+  redmine:
+    image: redmine:5.1.2-alpine
+    restart: always
+    depends_on:
+      - postgresql
+    environment:
+      REDMINE_DB_POSTGRES: postgresql
+      REDMINE_DB_PASSWORD: example
+      REDMINE_SECRET_KEY_BASE: supersecretkey
+    networks:
+      - redmine
+
+networks:
+  redmine:
+    internal: true
+
+volumes:
+  postgresql-data:

@@ -1,0 +1,56 @@
+version: '3'
+services:
+
+  socat:
+    image: alpine/socat
+    restart: always
+    deploy:
+      update_config:
+        parallelism: 1
+      placement:
+        constraints:
+          - node.role == manager
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: tcp-listen:2375,fork,reuseaddr unix-connect:/var/run/docker.sock
+    networks:
+      - traefik
+
+  traefik:
+    image: traefik:v3.0
+    restart: always
+    depends_on:
+      - socat
+    deploy:
+      update_config:
+        parallelism: 1
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        reservations:
+          memory: 128M
+        limits:
+          memory: 256M
+    ports:
+      - 22:22/tcp
+      - 80:80
+      #- 443:443
+      - 8080:8080
+    command:
+      - "--providers.swarm.endpoint=tcp://socat:2375"
+      - --providers.swarm.exposedByDefault=false
+      #- --experimental.http3=true
+      # dashboard
+      - --api.dashboard=true
+      - --api.insecure=true
+      # entry points
+      - --entryPoints.ssh.address=:22/tcp
+      - --entryPoints.http.address=:80
+      #- --entryPoints.https.address=:443
+    networks:
+      - traefik
+
+networks:
+  traefik:
+    internal: true
