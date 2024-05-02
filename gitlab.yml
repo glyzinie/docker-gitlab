@@ -35,7 +35,7 @@ services:
         delay: 1s
         order: start-first
     volumes:
-      - redis-data:/data:Z
+      - redis-data:/data
     networks:
       - gitlab
 
@@ -43,14 +43,12 @@ services:
     image: gitlab/gitlab-ee:16.11.0-ee.0
     #platform: linux/amd64
     restart: always
-    healthcheck:
-      test: ['CMD', '/opt/gitlab/bin/gitlab-healthcheck', '--fail', '--max-time', '10']
-      interval: 60s
-      timeout: 30s
-      retries: 5
     depends_on:
       - postgresql
       - redis
+    #ports:
+    #  - 22:22/tcp
+    #  - 80:80
     deploy:
       replicas: 1
       update_config:
@@ -121,7 +119,7 @@ services:
         grafana['enable'] = false
 
         # LFS
-        #gitlab_rails['lfs_enable'] = true
+        gitlab_rails['lfs_enable'] = false
 
         # Mail
         gitlab_rails['smtp_enable'] = false

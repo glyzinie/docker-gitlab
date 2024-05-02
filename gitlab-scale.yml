@@ -35,7 +35,7 @@ services:
         delay: 1s
         order: start-first
     volumes:
-      - redis-data:/data:Z
+      - redis-data:/data
     networks:
       - gitlab
 
@@ -43,16 +43,15 @@ services:
     image: gitlab/gitlab-ee:16.11.0-ee.0
     #platform: linux/amd64
     restart: always
-    healthcheck:
-      test: ['CMD', '/opt/gitlab/bin/gitlab-healthcheck', '--fail', '--max-time', '10']
-      interval: 60s
-      timeout: 30s
-      retries: 5
     depends_on:
       - postgresql
       - redis
+    #ports:
+    #  - 22:22/tcp
+    #  - 80:80
+    #  - 443:443
     deploy:
-      replicas: 1
+      replicas: 2
       update_config:
         order: start-first
       labels:
@@ -83,7 +82,7 @@ services:
         gitlab_rails['gitlab_username_changing_enabled'] = false
 
         # TODO:
-        external_url 'https://gitlab.example.com'
+        external_url 'https://gitlab.localhost'
 
         # Gitaly and GitLab use two shared secrets for authentication, one to authenticate gRPC requests
         # to Gitaly, and a second for authentication callbacks from GitLab-Shell to the GitLab internal API.
@@ -128,7 +127,6 @@ services:
         gitlab_rails['monitoring_whitelist'] = ['<MONITOR NODE IP>/32', '127.0.0.0/8']
         nginx['status']['options']['allow'] = ['<MONITOR NODE IP>/32', '127.0.0.0/8']
 
-
         # Disable
         gitlab_pages['enable'] = false
         pages_nginx['enable'] = false
@@ -146,7 +144,7 @@ services:
         alertmanager['enable'] = false
 
         # LFS
-        #gitlab_rails['lfs_enable'] = true
+        gitlab_rails['lfs_enable'] = false
 
         # Mail
         gitlab_rails['smtp_enable'] = false
@@ -164,11 +162,6 @@ services:
     image: gitlab/gitlab-ee:16.11.0-ee.0
     #platform: linux/amd64
     restart: always
-    healthcheck:
-      test: ['CMD', '/opt/gitlab/bin/gitlab-healthcheck', '--fail', '--max-time', '10']
-      interval: 60s
-      timeout: 30s
-      retries: 5
     depends_on:
       - postgresql
       - redis
@@ -238,11 +231,6 @@ services:
     image: gitlab/gitlab-ee:16.11.0-ee.0
     #platform: linux/amd64
     restart: always
-    healthcheck:
-      test: ['CMD', '/opt/gitlab/bin/gitlab-healthcheck', '--fail', '--max-time', '10']
-      interval: 60s
-      timeout: 30s
-      retries: 5
     depends_on:
       - postgresql
       - redis
