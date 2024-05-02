@@ -2,7 +2,7 @@ version: '3'
 services:
 
   socat:
-    image: alpine/socat
+    image: alpine/socat:latest
     restart: always
     deploy:
       update_config:
@@ -10,6 +10,13 @@ services:
       placement:
         constraints:
           - node.role == manager
+      resources:
+        reservations:
+          cpus: '0.05'
+          memory: 4M
+        limits:
+          cpus: '0.05'
+          memory: 6M
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     command: tcp-listen:2375,fork,reuseaddr unix-connect:/var/run/docker.sock
@@ -24,14 +31,13 @@ services:
     deploy:
       update_config:
         parallelism: 1
-      placement:
-        constraints:
-          - node.role == manager
       resources:
         reservations:
           memory: 128M
         limits:
           memory: 256M
+    environment:
+      TZ: 'Asia/Tokyo'
     ports:
       - 22:22/tcp
       - 80:80

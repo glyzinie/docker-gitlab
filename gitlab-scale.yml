@@ -4,7 +4,7 @@ services:
   # https://docs.gitlab.com/ee/administration/package_information/postgresql_versions.html
   # https://docs.gitlab.com/ee/install/requirements.html#postgresql-requirements
   postgresql:
-    image: postgres:14.10-alpine
+    image: postgres:14-alpine
     restart: always
     healthcheck:
       test: ['CMD', 'pg_isready']
@@ -25,7 +25,7 @@ services:
 
   # https://docs.gitlab.com/ee/install/requirements.html#redis
   redis:
-    image: redis:7.2.4-alpine
+    image: redis:7-alpine
     restart: always
     healthcheck:
       test: ['CMD', 'redis-cli', 'ping']
